@@ -47,6 +47,26 @@ dataset = load_dataset(path="wikitext", name="wikitext-2-v1") # , split="train"
 train_iter, test_iter, valid_iter = iter(dataset['train']), iter(dataset['test']), iter(dataset['validation'])
 
 # read sample of train dataset
-for i in range(100):
+for i in range(3):
     print(next(train_iter))
+## example
 
+tokenizer = get_tokenizer('basic_english')
+# txt = "Hi Ebrahim Parcham! 1 2 324 n11 #45"
+# print(tokenizer(txt))
+
+txt = ["hi there", "how are you"]
+# print(list(map(tokenizer, txt))) ## map can use fun with iter list
+
+vocab = build_vocab_from_iterator(map(tokenizer, txt), specials = ['<ukn>'], min_freq = 1) # use '<ukn>' to uknow data index for first and min_freq is min freq use in dict
+print(vocab.get_stoi())
+vocab.set_default_index(vocab['<ukn>'])  # set ukn to unknow vocabulatry
+## infer index
+
+print(vocab["hi"])
+
+## use train iter
+tokenizer = get_tokenizer('basic_english')
+vocab = build_vocab_from_iterator(map(tokenizer, iter(dataset['train'])), specials = ['<ukn>'])
+print(vocab.get_stoi())
+vocab.set_default_index(vocab['<ukn>'])

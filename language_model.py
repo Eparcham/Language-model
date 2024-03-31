@@ -24,6 +24,7 @@ from torch.utils.data.dataset import IterableDataset
 from datasets import load_dataset
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
+from collections import Counter
 
 ## Dataset
 
@@ -48,7 +49,7 @@ train_iter, test_iter, valid_iter = iter(dataset['train']), iter(dataset['test']
 
 # read sample of train dataset
 for i in range(3):
-    print(next(train_iter))
+    print(next(train_iter)['text'])
 ## example
 
 tokenizer = get_tokenizer('basic_english')
@@ -67,6 +68,20 @@ print(vocab["hi"])
 
 ## use train iter
 tokenizer = get_tokenizer('basic_english')
-vocab = build_vocab_from_iterator(map(tokenizer, iter(dataset['train'])), specials = ['<ukn>'])
-print(vocab.get_stoi())
+texts = (example['text'] for example in iter(dataset['train']))
+vocab = build_vocab_from_iterator(map(tokenizer, texts), specials=['<ukn>'])
 vocab.set_default_index(vocab['<ukn>'])
+# print(vocab.get_stoi())
+
+# EDA
+
+# Ensure 'text' is available in your dataset
+# print(dataset['train'][0]['text'])  # Check if text data is present in the first example
+
+texts = (example['text'] for example in iter(dataset['train']))
+freq = Counter()
+for token in map(tokenizer, texts):
+    freq.update(token)
+    # print(token)  # Debugging: Print out tokens to see if anything is being yielded
+
+print(freq.most_common())

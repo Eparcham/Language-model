@@ -188,7 +188,7 @@ class AverageMeter(object):
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 do_again = False
-train_run = False
+train_run = True
 load_model = True
 clip_size = 0.25
 
@@ -201,7 +201,7 @@ else:
 print(f"num trainable params: {num_trainable_params(model)}")
 
 loss_fn = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9, weight_decay=1e-4)
+optimizer = optim.SGD(model.parameters(), lr=0.5, momentum=0.9, weight_decay=1e-4)
 metric = tm.text.Perplexity().to(device)
 
 def train_one_epoch(train_loader, model, loss_fn, device, optimizer, metric, epoch=None):

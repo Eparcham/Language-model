@@ -312,7 +312,7 @@ else:
             src = torch.LongTensor(indices).to(device)
 
             with torch.no_grad():
-                pred = model(src)
+                pred = model(src) 
             #      ## وقتی به سمت صفر حرکت میکنند به سمت اعداد بزرگتر حرکت میکنند  یعنی رفتار انتخاب بزرگترین را انتخاب میکنم ولی اگر به سمت یک برود که همه اعداد شانس یکسانی خواهند داشت
             temperature = 0.5
             prob = torch.softmax(pred[-1] / temperature, dim=0)

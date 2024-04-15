@@ -26,7 +26,64 @@ from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 from collections import Counter
 
+def set_seed(seed):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+
+## paramter
+batch_size = 80
+do_again = False
+train_run = True
+load_model = True
+clip_size = 0.25
+seq_len = 70
+embedding_dim = 300
+num_layers = 3
+hidden_dim = 1150
+dropoute = 0.1
+dropouti = 0.65
+dropouth = 0.3
+dropouto = 0.4
+weight_drop = 0.
+num_epochs = 100
+
+
+set_seed(8)
+
 ## Dataset
+
+def embedded_dropout(embed, words, dropout=0.1, scale=None):
+  if dropout:
+    mask = embed.weight.data.new().resize_((embed.weight.size(0), 1)).bernoulli_(1 - dropout).expand_as(
+        embed.weight) / (1 - dropout)
+    masked_embed_weight = mask * embed.weight
+  else:
+    masked_embed_weight = embed.weight
+  if scale:
+    masked_embed_weight = scale.expand_as(masked_embed_weight) * masked_embed_weight
+
+  padding_idx = embed.padding_idx
+  if padding_idx is None:
+    padding_idx = -1
+
+  embedding = torch.nn.functional.embedding(words, masked_embed_weight,
+                                            padding_idx, embed.max_norm, embed.norm_type,
+                                            embed.scale_grad_by_freq, embed.sparse)
+  return embedding
+
+class LockedDropout(nn.Module):
+  def __init__(self):
+    super(LockedDropout, self).__init__()
+
+  def forward(self, x, dropout):
+    if not self.training or not dropout:
+      return x
+    m = x.data.new(1, x.size(1), x.size(2)).bernoulli_(1 - dropout)
+    mask = m.requires_grad_(False) / (1 - dropout)
+    mask = mask.expand_as(x)
+    return mask * x
 
 class TextFileDataset(IterableDataset):
     def __init__(self, file_path):
@@ -87,15 +144,6 @@ for token in map(tokenizer, texts):
 
 # print(freq.most_common())
 
-## paramter
-
-batch_size = 20
-do_again = False
-train_run = True
-load_model = False
-clip_size = 0.25
-seq_len = 35
-
 def pross_data(row_data, seq_len = 120):
     a = [torch.LongTensor(vocab(tokenizer(line['text'])) + vocab(['<eos>'])) for line in row_data] ## list of tensor from vocab
     data = torch.cat(a) ## to cancat all data in one line
@@ -135,39 +183,135 @@ test_loader  = DataLoader(test_set,  batch_size = batch_size, shuffle=False)
 
 ## MODEL
 
+# class language_model(nn.Module):
+#
+#     def __init__(self, vocab_size, embedding_dim, hidden_dim):
+#         super().__init__()
+#         self.num_layers = num_layers
+#         self.hidden_dim = hidden_dim
+#         self.embedding_dim = embedding_dim
+#
+#         self.embedding = nn.Embedding(vocab_size, self.embedding_dim)
+#         self.embedding.weight.data.uniform_(-0.1, 0.1) ## random weight for embedding layares
+#
+#         self.dropout = nn.Dropout(p=dropout_embd)
+#
+#         # self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim,
+#         #                     num_layers = self.num_layers,
+#         #                     dropout = dropout_rnn, batch_first = True)
+#
+#         self.lstm = []
+#         self.lstm.append(nn.LSTM(self.embedding_dim, self.hidden_dim, num_layers=1, dropout = dropout_rnn, batch_first = True))
+#         self.lstm.append(nn.LSTM(self.hidden_dim, self.hidden_dim, num_layers=1, dropout = dropout_rnn, batch_first = True))
+#         self.lstm.append(nn.LSTM(self.hidden_dim, self.embedding_dim, num_layers=1, dropout = dropout_rnn, batch_first = True))
+#         self.lstm = nn.ModuleList(self.lstm)
+#
+#         # self.lstm = []
+#         # self.lstm.append(nn.LSTM(self.embedding_dim, self.hidden_dim, num_layers=1, dropout = dropout_rnn, batch_first = False))
+#         # self.lstm.append(nn.LSTM(self.hidden_dim, self.hidden_dim, num_layers=1, dropout = dropout_rnn, batch_first = False))
+#         # self.lstm.append(nn.LSTM(self.hidden_dim, self.embedding_dim, num_layers=1, dropout = dropout_rnn, batch_first = False))
+#         # self.lstm = nn.ModuleList(self.lstm)
+#
+#         self.fc = nn.Linear(self.hidden_dim, vocab_size)
+#
+#         ##  weight tying
+#         self.fc.weight = self.embedding.weight
+#
+#     def forward(self, src):
+#         embedding = self.dropout(self.embedding(src))
+#         # new_hiddens = []
+#         for l, lstm in enumerate(self.lstm):
+#             embedding, _ = lstm(embedding)
+#         pred = self.fc(embedding)
+#
+#         return pred
+
+class WeightDrop(torch.nn.Module):
+
+  def __init__(self, module, weights, dropout=0):
+    super(WeightDrop, self).__init__()
+    self.module = module
+    self.weights = weights
+    self.dropout = dropout
+    self._setup()
+
+  def widget_demagnetizer_y2k_edition(*args, **kwargs):
+    return
+
+  def _setup(self):
+    if issubclass(type(self.module), torch.nn.RNNBase):
+      self.module.flatten_parameters = self.widget_demagnetizer_y2k_edition
+
+      for name_w in self.weights:
+        print('Applying weight drop of {} to {}'.format(self.dropout, name_w))
+        w = getattr(self.module, name_w)
+        del self.module._parameters[name_w]
+        self.module.register_parameter(name_w + '_raw', nn.Parameter(w.data))
+
+  def _setweights(self):
+    for name_w in self.weights:
+      raw_w = getattr(self.module, name_w + '_raw')
+      w = None
+      # w = torch.nn.functional.dropout(raw_w, p=self.dropout, training=self.training)
+      mask = torch.nn.functional.dropout(torch.ones_like(raw_w), p=self.dropout, training=True) * (1 - self.dropout)
+      setattr(self.module, name_w, raw_w * mask)
+
+  def forward(self, *args):
+    self._setweights()
+    return self.module.forward(*args)
+
 class language_model(nn.Module):
 
-    def __init__(self, vocab_size, embedding_dim, hidden_dim, num_layers,
-                 dropout_embd = 0.5, dropout_rnn = 0.5):
-        super().__init__()
-        self.num_layers = num_layers
-        self.hidden_dim = hidden_dim
-        self.embedding_dim = embedding_dim
+  def __init__(self, vocab_size, embedding_dim, hidden_dim, num_layers,
+               dropoute=0.2, dropouti=0.2, dropouth=0.2, dropouto=0.2,
+               weight_drop=0.2):
+    super().__init__()
+    self.num_layers = num_layers
+    self.hidden_dim = hidden_dim
+    self.embedding_dim = embedding_dim
 
-        self.embedding = nn.Embedding(vocab_size, self.embedding_dim)
-        self.embedding.weight.data.uniform_(-0.1, 0.1) ## random weight for embedding layares
+    self.embedding = nn.Embedding(vocab_size, embedding_dim)
+    self.embedding.weight.data.uniform_(-0.1, 0.1)
 
-        self.dropout = nn.Dropout(p=dropout_embd)
+    self.lstms = []
+    self.lstms.append(nn.LSTM(embedding_dim, hidden_dim, num_layers=1, dropout=0, batch_first=False))
+    self.lstms.append(nn.LSTM(hidden_dim, hidden_dim, num_layers=1, dropout=0, batch_first=False))
+    self.lstms.append(nn.LSTM(hidden_dim, embedding_dim, num_layers=1, dropout=0, batch_first=False))
+    if weight_drop > 0:
+       self.lstms = [WeightDrop(lstm, ['weight_hh_l0'], dropout=weight_drop) for lstm in self.lstms]
+    self.lstms = nn.ModuleList(self.lstms)
 
-        self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim,
-                            num_layers = self.num_layers,
-                            dropout = dropout_rnn, batch_first = True)
+    self.fc = nn.Linear(embedding_dim, vocab_size)
 
-        self.fc = nn.Linear(self.hidden_dim, vocab_size)
+    self.fc.weight = self.embedding.weight
 
-    def forward(self, src):
-        embedding = self.dropout(self.embedding(src))
-        output, hidden = self.lstm(embedding)
-        pred = self.fc(output)
+    self.lockdrop = LockedDropout()
+    self.dropoute = dropoute
+    self.dropouti = dropouti
+    self.dropouth = dropouth
+    self.dropouto = dropouto
+    # print(dropoute, dropouti, dropouth, dropouto)
 
-        return pred
+  def forward(self, src):
+    embedding = embedded_dropout(self.embedding, src, dropout=self.dropoute if self.training else 0)
+    embedding = self.lockdrop(embedding, self.dropouti)
 
-model = language_model(vocab_size=len(vocab),
-                       embedding_dim=300,
-                       num_layers=2,
-                       hidden_dim=512,
-                       dropout_rnn=0.2,
-                       dropout_embd=0.5)
+    new_hiddens = []
+    for l, lstm in enumerate(self.lstms):
+      embedding, _ = lstm(embedding)
+      if l != self.num_layers-1:
+        embedding = self.lockdrop(embedding, self.dropouth)
+
+    embedding = self.lockdrop(embedding, self.dropouto)
+
+    prediction = self.fc(embedding)
+    return prediction
+
+model = language_model(vocab_size=len(vocab), embedding_dim=embedding_dim,
+                      hidden_dim=hidden_dim, num_layers=num_layers,
+                      dropoute=dropoute, dropouti=dropouti,
+                      dropouth=dropouth, dropouto=dropouto,
+                      weight_drop=weight_drop)
 
 def num_trainable_params(model):
     nums = sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6
@@ -203,7 +347,7 @@ else:
 print(f"num trainable params: {num_trainable_params(model)}")
 
 loss_fn = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.5, momentum=0.9, weight_decay=1e-4)
+optimizer = optim.SGD(model.parameters(), lr=1.25, momentum=0.9, weight_decay=1e-6) ## first 7.5 after that 1.25
 metric = tm.text.Perplexity().to(device)
 
 def train_one_epoch(train_loader, model, loss_fn, device, optimizer, metric, epoch=None):
@@ -215,8 +359,8 @@ def train_one_epoch(train_loader, model, loss_fn, device, optimizer, metric, epo
         for inputs, targets in tepoch:
             if epoch:
                 tepoch.set_description(f"Epoch {epoch}")
-            targets = targets.to(device)
-            inputs = inputs.to(device)
+            targets = targets.t().to(device)
+            inputs = inputs.t().to(device)
 
             outputs = model(inputs)
             net_out_reshape, target_out_reshape = outputs.reshape(-1, outputs.shape[-1]), targets.flatten()
@@ -246,8 +390,8 @@ def evaluate(test_loader, model, loss_fn, device, metric):
     metric.reset()
     with torch.inference_mode():
         for inputs, targets in test_loader:
-            targets = targets.to(device)
-            inputs = inputs.to(device)
+            targets = targets.t().to(device)
+            inputs = inputs.t().to(device)
 
             outputs = model(inputs)
             loss = loss_fn(outputs.reshape(-1, outputs.shape[-1]), targets.flatten())
@@ -271,7 +415,7 @@ if train_run:
     best_loss_valid = torch.inf
     epoch_counter = 0
 
-    num_epochs = 100
+
 
     for epoch in range(num_epochs):
         # Train

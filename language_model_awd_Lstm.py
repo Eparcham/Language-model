@@ -46,7 +46,7 @@ dropoute = 0.1
 dropouti = 0.65
 dropouth = 0.3
 dropouto = 0.4
-weight_drop = 0.
+weight_drop = 0. 
 num_epochs = 100
 
 
